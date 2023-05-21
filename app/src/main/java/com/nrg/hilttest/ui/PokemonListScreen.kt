@@ -5,13 +5,11 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.material.CircularProgressIndicator
-import androidx.compose.material.MaterialTheme
-import androidx.compose.material.Surface
-import androidx.compose.material.Text
+import androidx.compose.material.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment.Companion.Center
 import androidx.compose.ui.Alignment.Companion.CenterHorizontally
@@ -32,8 +30,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
+import coil.compose.AsyncImage
+import coil.compose.SubcomposeAsyncImage
+import coil.compose.rememberAsyncImagePainter
+import coil.decode.SvgDecoder
 import coil.request.ImageRequest
-import com.google.accompanist.coil.CoilImage
+import coil.size.Size
 import com.nrg.hilttest.R
 import com.nrg.hilttest.data.models.PokedexListEntry
 import com.nrg.hilttest.ui.ViewModels.PokemonListViewModel
@@ -42,7 +44,8 @@ import timber.log.Timber
 
 @Composable
 fun PokemonListScreen(
-    navController: NavController
+    navController: NavController,
+    viewModel: PokemonListViewModel = hiltViewModel()
 ) {
     Surface(
         color = MaterialTheme.colors.background,
@@ -66,10 +69,14 @@ fun PokemonListScreen(
                     .padding(16.dp),
             ) {
                 Timber.log(Log.INFO, it)
+                viewModel.searchPokemonList(it)
             }
+            Spacer(modifier = Modifier.height(16.dp))
+            PokemonList(navController = navController)
         }
     }
 }
+
 
 @Composable
 fun SearchBar(
@@ -103,7 +110,7 @@ fun SearchBar(
                 .background(Color.White, CircleShape)
                 .padding(horizontal = 20.dp, vertical = 12.dp)
                 .onFocusChanged {
-                    isHintDisplayed = !it.isFocused
+                    isHintDisplayed = !it.isFocused && text.isNotEmpty()
                 }
         )
         if (isHintDisplayed) {
@@ -115,6 +122,48 @@ fun SearchBar(
                     vertical = 12.dp
                 )
             )
+        }
+    }
+}
+
+@Composable
+fun PokemonList(
+    navController: NavController,
+    viewModel: PokemonListViewModel = hiltViewModel()
+) {
+    val pokemonList by remember { viewModel.pokemonList }
+    val endReached by remember { viewModel.endReached }
+    val loadError by remember { viewModel.loadError }
+    val isLoading by remember { viewModel.isLoading }
+    val isSearching by remember {
+        viewModel.isSearching
+    }
+
+
+    LazyColumn(contentPadding = PaddingValues(16.dp)) {
+        val itemCount = if (pokemonList.size % 2 == 0 )
+                            pokemonList.size / 2
+                        else
+                            pokemonList.size / 2 + 1
+        items(itemCount) {
+            if(it >= itemCount - 1 && !endReached && !isLoading && !isSearching) {
+                viewModel.loadPokemonPaginated()
+            }
+            PokedexRow(rowIndex = it, entries = pokemonList, navController = navController)
+        }
+    }
+
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Center
+    ) {
+        if(isLoading) {
+            CircularProgressIndicator(color = MaterialTheme.colors.primary)
+        }
+        if (loadError.isNotEmpty()) {
+            RetrySection(error = loadError) {
+                viewModel.loadPokemonPaginated()
+            }
         }
     }
 }
@@ -155,25 +204,16 @@ fun PokedexEntry(
             }
     ) {
         Column {
-            CoilImage(
-             request = ImageRequest.Builder(LocalContext.current)
-                 .data(entry.imageUrl)
-                 .target {
-                     viewModel.calcDominantColor(it) {color ->
-                        dominantColor = color
-                     }
-                 }
-                 .build(),
-                contentDescription = entry.pokemonName,
-                fadeIn = true,
-                modifier = Modifier
-                    .size(120.dp)
-                    .align(CenterHorizontally)
-            ) {
-                CircularProgressIndicator(
-                    color = MaterialTheme.colors.primary,
-                    modifier = Modifier.scale(0.5f)
-                )
+//            SvgImageSample(
+//                entry.imageUrl,
+//                modifier = Modifier.align(CenterHorizontally)
+//            )
+            SvgAsyncImage(
+                entry.imageUrl,
+                modifier = Modifier.align(CenterHorizontally),
+                viewModel
+            )   {
+                dominantColor = it
             }
             Text(
                 text = entry.pokemonName,
@@ -215,3 +255,72 @@ fun PokedexRow(
     }
 }
 
+@Composable
+fun RetrySection(
+    error: String,
+    onRetry: () -> Unit
+) {
+    Column {
+        Text(text = error, color = Color.Red, fontSize = 18.sp)
+        Spacer(modifier = Modifier.height(8.dp))
+        Button(
+            onClick = { onRetry() },
+            modifier = Modifier.align(CenterHorizontally)
+        ) {
+            Text(text = "Retry")
+        }
+    }
+}
+
+@Composable
+fun SvgImageSample(
+    url: String,
+    modifier: Modifier = Modifier
+) {
+    val painter = rememberAsyncImagePainter(
+        model = ImageRequest.Builder(LocalContext.current)
+            .decoderFactory(SvgDecoder.Factory())
+            .data(url)
+            .size(Size.ORIGINAL) // Set the target size to load the image at.
+            .build()
+    )
+    Image(
+        painter = painter,
+        contentDescription = null,
+        modifier = modifier
+            .size(120.dp)
+            .fillMaxSize()
+    )
+}
+
+@Composable
+fun SvgAsyncImage(
+    url: String,
+    modifier: Modifier = Modifier,
+    viewModel: PokemonListViewModel,
+    onGetColor: (Color) -> Unit
+) {
+    SubcomposeAsyncImage(
+        model = ImageRequest.Builder(LocalContext.current)
+            .decoderFactory(SvgDecoder.Factory())
+            .data(url)
+            .size(Size.ORIGINAL)
+            .build(),
+        contentDescription = "pokemon",
+        modifier = modifier
+            .size(120.dp)
+            .fillMaxSize(),
+        onSuccess = { success ->  
+            val drawable = success.result.drawable
+            viewModel.calcDominantColor(drawable) { color ->
+                onGetColor(color)
+            }
+        },
+        loading = {
+            CircularProgressIndicator(
+                modifier = Modifier.scale(0.5f),
+                color = MaterialTheme.colors.primary
+            )
+        }
+    )
+}
